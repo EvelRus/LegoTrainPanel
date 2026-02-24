@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Runtime data
+data/logs/
+data/scenarios.json
+data/schedules.json
+data/consists.json
+
+# Config with personal UUIDs — keep example, ignore real one
+hub-config.json
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V7
+.Trashes
+ehthumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.local
