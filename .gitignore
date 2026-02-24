@@ -7,7 +7,7 @@ data/scenarios.json
 data/schedules.json
 data/consists.json
 
-# Config with personal UUIDs — keep example, ignore real one
+# Config with personal UUIDs
 hub-config.json
 
 # OS

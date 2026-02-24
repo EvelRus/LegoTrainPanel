@@ -1,0 +1,21 @@
+{
+  "name": "LEGO Train Control",
+  "short_name": "LEGO Trains",
+  "description": "LEGO PoweredUP Train Control Panel",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0d0f",
+  "theme_color": "#ffd500",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "photo/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    { "src": "photo/logo.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "categories": ["utilities"],
+  "lang": "ru"
+}

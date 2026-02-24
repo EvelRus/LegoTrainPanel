@@ -1,0 +1,25 @@
+{
+  "name": "legotrainpanel",
+  "version": "1.0.0",
+  "description": "LEGO Train Panel — Веб-приложение для управления поездами LEGO PoweredUP через браузер.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "lego",
+    "poweredup",
+    "train",
+    "bluetooth",
+    "ble",
+    "nodejs"
+  ],
+  "author": "Шарапов В.Н.",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-poweredup": "^10.1.0",
+    "socket.io": "^4.8.3"
+  }
+}
