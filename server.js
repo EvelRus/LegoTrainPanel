@@ -189,7 +189,7 @@ async function connectHub(hub) {
       try {
         device = await Promise.race([
           hub.waitForDeviceAtPort(port),
-          new Promise((_, rej) => setTimeout(() => rej(), 2000)),
+          new Promise((_, rej) => setTimeout(() => rej(), 5000)),
         ]);
       } catch (_) {
         continue;
@@ -205,7 +205,6 @@ async function connectHub(hub) {
         deviceTypeName = typeName;
       } else if (lc.includes("color") || lc.includes("distance")) {
         sensors[port] = { typeName, device };
-
         device.on("colorAndDistance", ({ color, distance }) => {
           const trainId = uuid;
           if (!trains[trainId]) return;
@@ -216,7 +215,7 @@ async function connectHub(hub) {
             distance,
             colorName: COLOR_NAMES[color] ?? "?",
           };
-          io.emit("sensorData", {
+          io.emit("sensorUpdate", {
             trainId,
             port,
             color,
@@ -225,7 +224,7 @@ async function connectHub(hub) {
           });
         });
         device.on("color", ({ color }) => {
-          io.emit("sensorData", {
+          io.emit("sensorUpdate", {
             trainId: uuid,
             port,
             color,
@@ -233,7 +232,7 @@ async function connectHub(hub) {
           });
         });
         device.on("distance", ({ distance }) => {
-          io.emit("sensorData", { trainId: uuid, port, distance });
+          io.emit("sensorUpdate", { trainId: uuid, port, distance });
         });
         try {
           device.requestUpdate?.();
@@ -242,9 +241,40 @@ async function connectHub(hub) {
     }
 
     if (!motor) {
+      const Consts = require("node-poweredup").Consts;
+      const motorTypes = [
+        Consts.DeviceType.TRAIN_MOTOR,
+        Consts.DeviceType.LARGE_MOTOR,
+        Consts.DeviceType.XLARGE_MOTOR,
+        Consts.DeviceType.MEDIUM_MOTOR,
+        Consts.DeviceType.TECHNIC_LARGE_MOTOR,
+        Consts.DeviceType.TECHNIC_XLARGE_MOTOR,
+      ];
+      for (const mt of motorTypes) {
+        try {
+          const devs = hub.getDevicesByType(mt);
+          if (devs?.length) {
+            motor = devs[0];
+            motorPort = "?";
+            deviceTypeName = motor.constructor?.name || "Motor";
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!motor) {
       log.warn(`${friendlyName}: мотор не найден`);
       return;
     }
+
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+    } catch (_) {}
+    try {
+      if (typeof motor.setPower === "function") motor.setPower(0);
+      else if (typeof motor.setSpeed === "function") motor.setSpeed(0);
+    } catch (_) {}
 
     const trainId = uuid || defaultName.replace(/\s+/g, "-");
 

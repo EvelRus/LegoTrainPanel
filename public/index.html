@@ -2348,18 +2348,32 @@
         s[type].currentTime = 0;
         s[type].play().catch(() => {});
       }
+
+      const _loopPlayPromise = {};
       function startLoop(id) {
         if (globalMuted || (prevSpeed[id] ?? 0) === 0) return;
         const s = trainSounds[id];
         if (!s?.moving) return;
         if (s.moving.paused) {
           s.moving.currentTime = 0;
-          s.moving.play().catch(() => {});
+          const p = s.moving.play().catch(() => {});
+          _loopPlayPromise[id] = p;
         }
       }
       function stopLoop(id) {
         const s = trainSounds[id];
-        if (s?.moving) {
+        if (!s?.moving) return;
+        const p = _loopPlayPromise[id];
+        delete _loopPlayPromise[id];
+        if (p) {
+          p.then(() => {
+            s.moving.pause();
+            s.moving.currentTime = 0;
+          }).catch(() => {
+            s.moving.pause();
+            s.moving.currentTime = 0;
+          });
+        } else {
           s.moving.pause();
           s.moving.currentTime = 0;
         }
@@ -2368,6 +2382,8 @@
         const s = trainSounds[id];
         if (s?.moving) s.moving.volume = Math.min(1, Math.abs(speed) / 60);
       }
+
+      const _startLoopTimer = {};
       function handleSpeedChange(id, newSpeed) {
         const prev = prevSpeed[id] ?? 0;
         prevSpeed[id] = newSpeed;
@@ -2378,11 +2394,14 @@
             s?.start && isFinite(s.start.duration) && s.start.duration > 0.1
               ? s.start.duration * 1000
               : 900;
-          setTimeout(() => {
+          clearTimeout(_startLoopTimer[id]);
+          _startLoopTimer[id] = setTimeout(() => {
             startLoop(id);
             setLoopVol(id, prevSpeed[id]);
           }, delay);
         } else if (prev !== 0 && newSpeed === 0) {
+          clearTimeout(_startLoopTimer[id]);
+          delete _startLoopTimer[id];
           stopLoop(id);
           playOnce(id, "stop");
         } else if (prev !== 0 && newSpeed !== 0) {
