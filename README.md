@@ -84,4 +84,8 @@ LegoTrainPanel/
 node-poweredup ^10.x   — управление хабами по BLE
 express        ^4.x    — HTTP-сервер и API
 socket.io      ^4.x    — WebSocket для реального времени
+<<<<<<< Updated upstream
 ```
+=======
+```
+>>>>>>> Stashed changes
