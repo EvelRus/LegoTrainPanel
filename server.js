@@ -251,7 +251,13 @@ async function connectHub(hub) {
     return;
   }
 
-  const uuid = hub.uuid || hub.address || null; // Получаем UUID хаба, если он доступен, иначе используем адрес или null
+  const uuid = hub.uuid || hub.address || null;
+
+  // Guard: пропускаем если UUID уже подключён (дубль после scan())
+  if (uuid && trains[uuid]?.connected) {
+    log.info(`Already connected, skip duplicate discover: ${uuid.slice(0, 8)}`);
+    return;
+  }
   const defaultName = hub.name || `Train-${Object.keys(trains).length + 1}`; // Формируем имя по умолчанию на основе имени хаба или количества уже подключенных поездов
   hubConfig = loadConfig();
 
@@ -296,7 +302,7 @@ async function connectHub(hub) {
         Promise.race([
           hub.waitForDeviceAtPort(port),
           new Promise((_, rej) =>
-            setTimeout(() => rej(new Error("timeout")), 2000),
+            setTimeout(() => rej(new Error("timeout")), 4500),
           ),
         ]).then((device) => ({ port, device })),
       ),
@@ -315,8 +321,10 @@ async function connectHub(hub) {
         motorPort = port;
         deviceTypeName = typeName;
       } else if (lc.includes("color") || lc.includes("distance")) {
-        sensors[port] = { typeName, device };
+        // Сохраняем только typeName — без device, иначе Socket.IO упадёт на циклических ссылках
+        sensors[port] = { typeName };
         const tid = uuid;
+        // Навешиваем события на локальную переменную device, а не на sensors[port].device
         device.on("colorAndDistance", ({ color, distance }) => {
           if (!trains[tid]) return;
           io.emit("sensorUpdate", {
@@ -327,16 +335,19 @@ async function connectHub(hub) {
             distance,
             colorName: COLOR_NAMES[color] ?? "?",
           });
+          // Уведомляем планировщик — может запустить condition-шаг сценария
+          sched.onSensorColor(tid, port, color);
         });
-        device.on("color", ({ color }) =>
+        device.on("color", ({ color }) => {
           io.emit("sensorUpdate", {
             trainId: uuid,
             port,
             type: "color",
             color,
             colorName: COLOR_NAMES[color] ?? "?",
-          }),
-        );
+          });
+          sched.onSensorColor(uuid, port, color);
+        });
         device.on("distance", ({ distance }) =>
           io.emit("sensorUpdate", {
             trainId: uuid,
@@ -419,24 +430,43 @@ async function connectHub(hub) {
 
     // Настраиваем события для обновления данных о батарее и реакции на нажатия кнопки на хабе. При изменении уровня батареи отправляем обновлённую информацию в интерфейс, включая предупреждение при низком уровне. При нажатии кнопки, если её состояние соответствует определённому значению, отправляем команду для воспроизведения звука сигнала. Также обрабатываем события ошибок, логируя их для диагностики.
     // Дебаунс: io.emit только при изменении, log раз в 60с или скачок ≥5%.
-    let _lastBatEmit = -1, _lastBatLogTime = 0, _lastBatLogLvl = -1;
+    let _lastBatEmit = -1,
+      _lastBatLogTime = 0,
+      _lastBatLogLvl = -1;
     hub.on("batteryLevel", ({ batteryLevel: lvl }) => {
       if (trains[trainId]) trains[trainId].batteryLevel = lvl;
       if (lvl !== _lastBatEmit) {
         _lastBatEmit = lvl;
-        io.emit("hubStatus", { id: trainId, battery: lvl, lowBattery: lvl <= 15 });
+        io.emit("hubStatus", {
+          id: trainId,
+          battery: lvl,
+          lowBattery: lvl <= 15,
+        });
       }
       const now = Date.now();
-      if (now - _lastBatLogTime > 60_000 || Math.abs(lvl - _lastBatLogLvl) >= 5 || lvl <= 15) {
-        _lastBatLogTime = now; _lastBatLogLvl = lvl;
+      if (
+        now - _lastBatLogTime > 60_000 ||
+        Math.abs(lvl - _lastBatLogLvl) >= 5 ||
+        lvl <= 15
+      ) {
+        _lastBatLogTime = now;
+        _lastBatLogLvl = lvl;
         log.info(`Battery: ${lvl}%${lvl <= 15 ? " ⚠ LOW" : ""}`, trainId);
       }
     });
 
     // Реакция на нажатия кнопки на хабе. В зависимости от состояния кнопки (например, 2 может означать короткое нажатие) отправляем команду для воспроизведения звука сигнала в интерфейсе. Это позволяет использовать кнопку на хабе для управления функциями поезда, например, для подачи сигнала или запуска определённых сценариев.
-    hub.on("button", ({ state }) => {
-      log.info(`Hub button state=${state}`, trainId);
-      if (state === 2) io.emit("playHorn", { trainId });
+    hub.on("button", (...args) => {
+      const second = args[1];
+      const first = args[0];
+      const state = second ?? first?.state ?? first?.event ?? first;
+      log.info(
+        `Hub button: args=${JSON.stringify(args)} → state=${JSON.stringify(state)}`,
+        trainId,
+      );
+      if (state === 2 || state === 1 || state === "pressed" || state === true) {
+        io.emit("playHorn", { trainId });
+      }
     });
 
     // Обработка событий ошибок, возникающих на хабе. Логируем сообщение об ошибке вместе с идентификатором поезда для диагностики и устранения проблем. Это важно для отслеживания стабильности подключения и выявления возможных проблем с оборудованием или программным обеспечением.
@@ -563,8 +593,8 @@ log.info(
 
 /**
  * Подключает сканер PyBricks хабов. Слушает события обнаружения периферийных устройств через noble и проверяет, являются ли они PyBricks-совместимыми. Если да, то вызывает функцию connectPyBricksHub для обработки подключения к этому хабу. Это обеспечивает поддержку PyBricks-совместимых устройств, которые могут не работать корректно через стандартный процесс обнаружения node-poweredup.
- * 
- * @returns 
+ *
+ * @returns
  */
 function attachPyBricksScanner() {
   const noble = getNoble();
@@ -585,7 +615,6 @@ function attachPyBricksScanner() {
 }
 
 attachPyBricksScanner();
-
 
 const connectedClients = new Set(); // Множество для отслеживания подключённых клиентов браузера. Используется для управления состоянием приложения, например, для автоматической остановки поездов при отключении всех клиентов.
 
@@ -633,7 +662,9 @@ io.on("connection", (socket) => {
   );
   socket.on("startRecording", ({ name }) => sched.startRecording(name));
   socket.on("stopRecording", () => sched.stopRecording());
-  socket.on("playScenario", ({ name, loops }) => sched.playScenario(name, loops));
+  socket.on("playScenario", ({ name, loops }) =>
+    sched.playScenario(name, loops),
+  );
   socket.on("stopScenario", ({ name }) => sched.stopScenario(name));
   socket.on("deleteScenario", ({ name }) => sched.deleteScenario(name));
   socket.on("addSchedule", ({ id, schedule }) =>

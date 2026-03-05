@@ -221,30 +221,37 @@ socket.on(
     }
   },
 );
-socket.on("sensorUpdate", ({ trainId, type, color, distance }) => {
+socket.on("sensorUpdate", ({ trainId, type, color, colorName, distance }) => {
   const el = $(`sensor-${trainId}`);
   if (!el) return;
   el.style.display = "";
+  // LEGO PoweredUP цвета (код → CSS-цвет)
   const SENSOR_COLORS = {
-    0: "transparent",
-    1: "#111",
-    2: "#7f1d1d",
-    3: "#1e3a8a",
-    4: "#f59e0b",
-    5: "#166534",
-    6: "#dc2626",
-    7: "#f3f4f6",
-    8: "#c2410c",
-    9: "#7c3aed",
-    10: "#0891b2",
+    0: "#111111", // Чёрный
+    1: "#ff69b4", // Розовый
+    2: "#9b59b6", // Фиолетовый
+    3: "#2980b9", // Синий
+    4: "#00bcd4", // Голубой
+    5: "#1abc9c", // Бирюзовый
+    6: "#27ae60", // Зелёный
+    7: "#f1c40f", // Жёлтый
+    8: "#e67e22", // Оранжевый
+    9: "#e74c3c", // Красный
+    10: "#ecf0f1", // Белый
   };
   if (type === "color" || type === "colorAndDistance") {
     const dot = $(`scolor-${trainId}`);
-    if (dot) dot.style.background = SENSOR_COLORS[color] || "var(--bdr)";
+    const lbl = $(`scolorname-${trainId}`);
+    const css = SENSOR_COLORS[color];
+    if (dot) {
+      dot.style.background = css ?? "var(--bdr)";
+      dot.style.boxShadow = css ? `0 0 6px ${css}88` : "none";
+    }
+    if (lbl) lbl.textContent = colorName ?? "?";
   }
   if (type === "distance" || type === "colorAndDistance") {
     const ds = $(`sdist-${trainId}`);
-    if (ds) ds.textContent = `${distance ?? "—"} mm`;
+    if (ds) ds.textContent = distance != null ? `${distance} mm` : "—";
   }
 });
 socket.on("playHorn", ({ trainId }) => playOnce(trainId, "horn"));
@@ -264,12 +271,16 @@ function addTrainCard(d) {
     hubTypeName = "—",
     deviceTypeName = "—",
     motorPort = "?",
-    sensorPort = null,
-    sensorTypeName = null,
+    sensors = {},
     rampStepSize = 10,
     rampStepMs = 100,
     presets = [20, 50, 80],
   } = d;
+  // sensors приходит как { "B": { typeName: "ColorDistanceSensor" } }
+  // Берём первый найденный сенсор для отображения в карточке
+  const firstSensor = Object.entries(sensors)[0];
+  const sensorPort = firstSensor?.[0] || null;
+  const sensorTypeName = firstSensor?.[1]?.typeName || null;
   if ($(`card-${id}`)) {
     setConnected(id, true);
     return;
@@ -291,7 +302,12 @@ function addTrainCard(d) {
     )
     .join("");
   const sensorHtml = sensorPort
-    ? `<div class="sensor-row" id="sensor-${id}" style="display:none"><span class="s-label">📡 ${sensorPort}</span><div class="sensor-color-dot" id="scolor-${id}"></div><span id="sdist-${id}">—</span></div>`
+    ? `<div class="sensor-row" id="sensor-${id}" style="display:none">` +
+      `<span class="s-label">📡 ${sensorPort}</span>` +
+      `<div class="sensor-color-dot" id="scolor-${id}"></div>` +
+      `<span id="scolorname-${id}" style="font-size:.7rem;color:var(--mut);min-width:48px">—</span>` +
+      `<span id="sdist-${id}">—</span>` +
+      `</div>`
     : "";
   const card = document.createElement("div");
   card.className = "train-card" + (connected ? "" : " disconnected");
