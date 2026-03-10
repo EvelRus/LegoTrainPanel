@@ -1,5 +1,9 @@
 "use strict";
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Зависимости и импорты
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PoweredUP = require("node-poweredup");
 const express = require("express");
 const http = require("http");
@@ -16,15 +20,28 @@ const {
   getNoble,
 } = require("./lib/pybricks");
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Константы путей
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PUBLIC_DIR = path.join(__dirname, "public");
 const CONFIG_PATH = path.join(__dirname, "hub-config.json");
 const DATA_DIR = path.join(__dirname, "data");
 const LOGS_DIR = path.join(DATA_DIR, "logs");
 
+// Создаём необходимые директории, если их ещё нет
 [DATA_DIR, LOGS_DIR, PUBLIC_DIR].forEach((d) => {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Вспомогательные утилиты
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Читает версии зависимостей из package.json
+ * @returns {Object} объект с версиями node-poweredup и socket.io
+ */
 function readPkgVersions() {
   try {
     const pkg = JSON.parse(
@@ -40,6 +57,10 @@ function readPkgVersions() {
 
 const pkgVer = readPkgVersions();
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Инициализация веб-сервера и Socket.IO
+// ─────────────────────────────────────────────────────────────────────────────
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -50,11 +71,16 @@ const io = new Server(server, {
 
 app.use(express.json());
 
+// Глобальные сервисы
 const log = new Logger(LOGS_DIR);
-const trains = {};
+const trains = {}; // Хранилище всех обнаруженных и подключённых поездов
 const ramp = new RampEngine(trains, io, log, true);
 log.attach(io);
 const sched = new Scheduler(DATA_DIR, ramp, log, io);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Работа с конфигурацией хабов
+// ─────────────────────────────────────────────────────────────────────────────
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) return {};
@@ -72,6 +98,7 @@ function saveConfig(cfg) {
 
 let hubConfig = loadConfig();
 
+// Словарь соответствия кодов цветов LEGO → русские названия
 const COLOR_NAMES = {
   0: "Чёрный",
   1: "Розовый",
@@ -86,6 +113,11 @@ const COLOR_NAMES = {
   10: "Белый",
 };
 
+/**
+ * Формирует объект с информацией о занятых портах хаба
+ * @param {Object} train - объект поезда
+ * @returns {Object} { A: {...}, B: {...}, ... }
+ */
 function buildPortsInfo(train) {
   const ports = { A: null, B: null, C: null, D: null };
   if (train.motorPort && train.motorPort !== "?") {
@@ -102,6 +134,11 @@ function buildPortsInfo(train) {
   return ports;
 }
 
+/**
+ * Формирует payload для отправки клиенту по событию newTrain / обновления
+ * @param {string} id - идентификатор поезда (обычно uuid)
+ * @returns {Object|null}
+ */
 function trainPayload(id) {
   const t = trains[id];
   if (!t) return null;
@@ -126,7 +163,9 @@ function trainPayload(id) {
   };
 }
 
-// ── API ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  HTTP API
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.get("/api/info", (_req, res) =>
   res.json({
@@ -142,6 +181,8 @@ app.post("/api/config", (req, res) => {
   try {
     hubConfig = req.body;
     saveConfig(hubConfig);
+
+    // Применяем изменённые настройки ко всем уже подключённым поездам
     for (const train of Object.values(trains)) {
       const cfg = hubConfig[train.uuid] || {};
       if (cfg.name) train.name = cfg.name;
@@ -151,6 +192,7 @@ app.post("/api/config", (req, res) => {
       if (cfg.rampStepMs) train.rampStepMs = cfg.rampStepMs;
       if (cfg.presets) train.presets = cfg.presets;
     }
+
     log.info("Config saved from browser");
     res.json({ ok: true });
   } catch (e) {
@@ -172,11 +214,15 @@ app.get("/api/scenarios", (_req, res) => res.json(sched.scenarios));
 app.get("/api/schedules", (_req, res) => res.json(sched.schedules));
 app.get("/api/consists", (_req, res) => res.json(sched.consists));
 
+/**
+ * Просмотр содержимого публичной директории (для медиа-файлов)
+ */
 app.get("/api/browse", (req, res) => {
   const rel = (req.query.path || "").replace(/\.\./g, "");
   const dir = path.join(PUBLIC_DIR, rel);
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory())
     return res.json({ dirs: [], files: [] });
+
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   res.json({
     dirs: entries.filter((e) => e.isDirectory()).map((e) => e.name),
@@ -191,10 +237,16 @@ app.get("/api/browse", (req, res) => {
   });
 });
 
-// ── HUB CONNECT ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Обработка обнаружения и подключения LEGO Powered Up хабов
+// ─────────────────────────────────────────────────────────────────────────────
 
 const poweredUP = new PoweredUP.PoweredUP();
 
+/**
+ * Основная логика подключения стандартного Powered Up хаба
+ * @param {Hub} hub - объект хаба из node-poweredup
+ */
 async function connectHub(hub) {
   if (hub.peripheral && isPyBricksPeripheral(hub.peripheral)) {
     log.info(`Skipping PyBricks hub in standard flow: ${hub.uuid}`);
@@ -211,6 +263,7 @@ async function connectHub(hub) {
   const defaultName = hub.name || `Train-${Object.keys(trains).length + 1}`;
   hubConfig = loadConfig();
 
+  // Регистрируем новый хаб в конфиге, если его там ещё нет
   if (uuid && !hubConfig[uuid]) {
     hubConfig[uuid] = {
       name: defaultName,
@@ -231,6 +284,7 @@ async function connectHub(hub) {
   try {
     await hub.connect();
 
+    // Собираем базовую информацию об устройстве
     const firmwareVersion = hub.firmwareVersion || "—";
     const hardwareVersion = hub.hardwareVersion || "—";
     const hubTypeName = hub.constructor?.name || "Hub";
@@ -246,6 +300,7 @@ async function connectHub(hub) {
       deviceTypeName = "—";
     const sensors = {};
 
+    // Пытаемся найти устройства на портах A–D с таймаутом
     const portResults = await Promise.allSettled(
       ["A", "B", "C", "D"].map((port) =>
         Promise.race([
@@ -257,6 +312,7 @@ async function connectHub(hub) {
       ),
     );
 
+    // Обрабатываем найденные устройства
     for (const result of portResults) {
       if (result.status !== "fulfilled") continue;
       const { port, device } = result.value;
@@ -271,28 +327,38 @@ async function connectHub(hub) {
       } else if (lc.includes("color") || lc.includes("distance")) {
         sensors[port] = { typeName };
         const tid = uuid;
+
+        // Обработка событий от датчиков цвета/расстояния
         device.on("colorAndDistance", ({ color, distance }) => {
           if (!trains[tid]) return;
+          const colorName = COLOR_NAMES[color] ?? "?";
+          log.info(
+            `📡 Сенсор [${port}]: 🎨 ${colorName} (${color}), расст = ${distance} мм`,
+            tid,
+          );
           io.emit("sensorUpdate", {
             trainId: tid,
             port,
             type: "colorAndDistance",
             color,
             distance,
-            colorName: COLOR_NAMES[color] ?? "?",
+            colorName,
           });
           sched.onSensorColor(tid, port, color);
         });
+
         device.on("color", ({ color }) => {
+          const colorName = COLOR_NAMES[color] ?? "?";
           io.emit("sensorUpdate", {
             trainId: uuid,
             port,
             type: "color",
             color,
-            colorName: COLOR_NAMES[color] ?? "?",
+            colorName,
           });
           sched.onSensorColor(uuid, port, color);
         });
+
         device.on("distance", ({ distance }) =>
           io.emit("sensorUpdate", {
             trainId: uuid,
@@ -301,12 +367,36 @@ async function connectHub(hub) {
             distance,
           }),
         );
-        try {
-          device.requestUpdate?.();
-        } catch (_) {}
+
+        // Явная подписка на режим COLOR_AND_DISTANCE (режим 8)
+        (async () => {
+          try {
+            if (typeof device._parse !== "function") {
+              log.warn(
+                `📡 Сенсор [${port}]: _parse недоступен — только event-fallback`,
+                uuid,
+              );
+            }
+            if (typeof device.subscribe === "function") {
+              await device.subscribe(8);
+              log.info(
+                `📡 Сенсор [${port}]: subscribe(8) → COLOR_AND_DISTANCE ✓`,
+                uuid,
+              );
+            } else {
+              device.requestUpdate?.();
+            }
+          } catch (e) {
+            log.warn(`📡 Сенсор [${port}]: subscribe err — ${e.message}`, uuid);
+            try {
+              device.requestUpdate?.();
+            } catch (_) {}
+          }
+        })();
       }
     }
 
+    // Fallback: ищем мотор по типу, если не нашли по портам
     if (!motor) {
       const Consts = require("node-poweredup").Consts;
       for (const mt of [
@@ -334,15 +424,43 @@ async function connectHub(hub) {
       return;
     }
 
+    // Небольшая пауза перед управлением мотором (стабилизация соединения)
     await new Promise((r) => setTimeout(r, 300));
+
+    // Диагностика доступных методов мотора
     try {
-      if (typeof motor.setPower === "function") motor.setPower(0);
-      else if (typeof motor.setSpeed === "function") motor.setSpeed(0);
+      const allMethods = new Set();
+      let p = motor;
+      while (p && p !== Object.prototype) {
+        Object.getOwnPropertyNames(p)
+          .filter((n) => n !== "constructor" && typeof motor[n] === "function")
+          .forEach((n) => allMethods.add(n));
+        p = Object.getPrototypeOf(p);
+      }
+      const hasBrake = allMethods.has("brake");
+      const hasPower = allMethods.has("setPower");
+      const hasSpeed = allMethods.has("setSpeed");
+      log.info(
+        `Motor API: brake=${hasBrake} setPower=${hasPower} setSpeed=${hasSpeed}` +
+          ` | all=[${[...allMethods].join(", ")}]`,
+        uuid,
+      );
+
+      // Принудительно останавливаем мотор при старте (лучше brake, чем float)
+      if (hasBrake) {
+        try {
+          motor.brake();
+        } catch (_) {}
+      } else if (hasPower) {
+        try {
+          motor.setPower(0);
+        } catch (_) {}
+      }
     } catch (_) {}
 
     const trainId = uuid || defaultName.replace(/\s+/g, "-");
 
-    // FIX: сбрасываем stop-state при реконнекте чтобы не было дедупликации
+    // Очищаем предыдущее состояние ramp при переподключении
     ramp.resetStopState(trainId);
     ramp.stopKeepalive(trainId);
     ramp.clearRamp(trainId);
@@ -372,9 +490,11 @@ async function connectHub(hub) {
     ramp.startKeepalive(trainId);
     ramp._setLED(trains[trainId]);
 
+    // Обработка изменения уровня заряда
     let _lastBatEmit = -1,
       _lastBatLogTime = 0,
       _lastBatLogLvl = -1;
+
     hub.on("batteryLevel", ({ batteryLevel: lvl }) => {
       if (trains[trainId]) trains[trainId].batteryLevel = lvl;
       if (lvl !== _lastBatEmit) {
@@ -397,6 +517,7 @@ async function connectHub(hub) {
       }
     });
 
+    // Кнопка хаба → сигнал гудка
     hub.on("button", (...args) => {
       const second = args[1];
       const first = args[0];
@@ -434,6 +555,10 @@ async function connectHub(hub) {
   }
 }
 
+/**
+ * Подключение PyBricks-хаба (альтернативная прошивка)
+ * @param {Peripheral} peripheral - объект noble peripheral
+ */
 async function connectPyBricksHub(peripheral) {
   const uuid = peripheral.id;
   if (trains[uuid]?.connected) return;
@@ -464,7 +589,6 @@ async function connectPyBricksHub(peripheral) {
     await pb.connect();
     const prevSpd = trains[uuid]?.speed ?? 0;
 
-    // FIX: сбрасываем stop-state при реконнекте
     ramp.resetStopState(uuid);
 
     trains[uuid] = {
@@ -518,6 +642,9 @@ log.info(
   `🔍 Bluetooth scan started  node-poweredup v${pkgVer.poweredUp}  socket.io v${pkgVer.socketIO}`,
 );
 
+/**
+ * Запуск отдельного сканера для PyBricks через noble
+ */
 function attachPyBricksScanner() {
   const noble = getNoble();
   if (!noble) {
@@ -535,7 +662,9 @@ function attachPyBricksScanner() {
 }
 attachPyBricksScanner();
 
-// ── SOCKET.IO ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Socket.IO — взаимодействие с веб-интерфейсом
+// ─────────────────────────────────────────────────────────────────────────────
 
 const connectedClients = new Set();
 
@@ -543,6 +672,7 @@ io.on("connection", (socket) => {
   connectedClients.add(socket.id);
   log.info(`Browser ↑ ${socket.id} (active: ${connectedClients.size})`);
 
+  // Отправляем текущее состояние новому клиенту
   for (const id of Object.keys(trains)) {
     const p = trainPayload(id);
     if (p) socket.emit("newTrain", p);
@@ -561,10 +691,14 @@ io.on("connection", (socket) => {
     const clamped = Math.max(-100, Math.min(100, Math.round(speed)));
     const src = source || "user";
     if (clamped === train.speed) return;
+
     log.info(`[${src}] setSpeed: ${clamped}`, trainId);
+
     if (sched.isRecording()) sched.recordStep(trainId, clamped);
+
     if (clamped === 0) ramp.stopNow(trainId, src);
     else ramp.rampTo(trainId, clamped, src);
+
     sched.onTrainSpeedChange(trainId, clamped);
   });
 
@@ -579,13 +713,16 @@ io.on("connection", (socket) => {
   socket.on("setConsistSpeed", ({ consistId, speed }) =>
     sched.setConsistSpeed(consistId, speed),
   );
+
   socket.on("startRecording", ({ name }) => sched.startRecording(name));
   socket.on("stopRecording", () => sched.stopRecording());
+
   socket.on("playScenario", ({ name, loops }) =>
     sched.playScenario(name, loops),
   );
   socket.on("stopScenario", ({ name }) => sched.stopScenario(name));
   socket.on("deleteScenario", ({ name }) => sched.deleteScenario(name));
+
   socket.on("addSchedule", ({ id, schedule }) =>
     sched.addSchedule(id, schedule),
   );
@@ -625,9 +762,9 @@ io.on("connection", (socket) => {
   socket.on("setLED", ({ trainId, color }) =>
     ramp.setLEDManual(trainId, color),
   );
+
   socket.on("reconnectHub", ({ trainId }) => {
     log.info(`Reconnect requested: ${trainId}`);
-    // FIX: сбрасываем stop-state перед реконнектом
     ramp.resetStopState(trainId);
     poweredUP.scan();
     io.emit("hubStatus", { id: trainId, reconnecting: true, connected: false });
@@ -636,6 +773,8 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     connectedClients.delete(socket.id);
     log.info(`Browser ↓ ${socket.id} (remaining: ${connectedClients.size})`);
+
+    // Автостоп поездов при отсутствии активных клиентов
     if (connectedClients.size === 0) {
       setTimeout(() => {
         if (connectedClients.size === 0) {
@@ -648,23 +787,50 @@ io.on("connection", (socket) => {
   });
 });
 
-// ── STATIC & START ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Статические файлы и запуск сервера
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.use(express.static(PUBLIC_DIR));
 server.listen(3000, () => log.info("🚂 http://localhost:3000"));
 
-// ── GRACEFUL SHUTDOWN ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Graceful shutdown
+// ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Корректное завершение работы приложения
+ * @param {string} signal - сигнал, вызвавший остановку
+ */
 function shutdown(signal) {
   log.info(`${signal} received, stopping all trains and shutting down…`);
   ramp.stopAll(`shutdown:${signal}`);
   sched.destroy();
   ramp.destroy();
+
+  try {
+    poweredUP.stopScanning();
+  } catch (_) {}
+
+  for (const train of Object.values(trains)) {
+    try {
+      if (train.hub && typeof train.hub.disconnect === "function") {
+        train.hub.disconnect();
+      }
+    } catch (_) {}
+  }
+
+  try {
+    const noble = getNoble();
+    if (noble && typeof noble.stopScanning === "function") noble.stopScanning();
+  } catch (_) {}
+
   setTimeout(() => {
     server.close(() => {
       log.info("HTTP server closed. Bye.");
       process.exit(0);
     });
+    setTimeout(() => process.exit(0), 2000);
   }, 1200);
 }
 

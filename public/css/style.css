@@ -469,9 +469,44 @@ main {
 /* Speed */
 .speed-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* Левая колонка — скорость в рамке */
+.sr-speed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--surf2);
+  border: 1px solid var(--bdr);
+  text-align: center;
+  transition:
+    background 0.3s,
+    border-color 0.3s;
+}
+.sr-speed.fwd {
+  background: var(--gdim);
+  border-color: rgba(0, 230, 118, 0.2);
+}
+.sr-speed.rev {
+  background: var(--bdim);
+  border-color: rgba(64, 196, 255, 0.2);
+}
+
+/* Центральная колонка — не скачет */
+.sr-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 .speed-num {
   font-family: var(--fm);
@@ -479,7 +514,8 @@ main {
   line-height: 1;
   color: var(--yel);
   transition: color 0.3s;
-  min-width: 85px;
+  text-align: center;
+  display: block;
 }
 .speed-num.rev {
   color: var(--blu);
@@ -491,7 +527,8 @@ main {
   font-family: var(--fm);
   font-size: 0.63rem;
   color: var(--mut);
-  margin-top: 2px;
+  margin-top: 3px;
+  letter-spacing: 1px;
 }
 .dir-badge {
   display: flex;
@@ -500,7 +537,8 @@ main {
   gap: 3px;
   padding: 7px 10px;
   border-radius: 7px;
-  min-width: 56px;
+  width: 72px;
+  flex-shrink: 0;
   background: var(--surf2);
   border: 1px solid var(--bdr);
   font-size: 0.55rem;
@@ -1413,6 +1451,9 @@ footer {
   text-decoration: none;
   transition: color 0.2s;
 }
+.ftr-link:visited {
+  color: var(--mut);
+}
 .ftr-link:hover {
   color: var(--yel);
 }
@@ -1426,6 +1467,17 @@ footer {
   opacity: 0.7;
   font-size: 0.62rem;
   letter-spacing: 1px;
+}
+.ftr-ded a {
+  color: inherit;
+  text-decoration: none;
+}
+.ftr-ded a:visited {
+  color: inherit;
+}
+.ftr-ded a:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 .ftr-auth {
   color: var(--mut);
