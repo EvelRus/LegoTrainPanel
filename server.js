@@ -244,6 +244,15 @@ app.get("/api/browse", (req, res) => {
 const poweredUP = new PoweredUP.PoweredUP();
 
 /**
+ * Набор UUID хабов, для которых в данный момент идёт процесс подключения.
+ * Предотвращает гонку: при быстром переподключении noble может вызвать
+ * "discover" несколько раз до того, как первый connect() завершится.
+ * Без этой защиты два параллельных connectHub пытаются вызвать hub.connect()
+ * на одном peripheral → noble: unknown peripheral null connected!
+ */
+const _connectingHubs = new Set();
+
+/**
  * Основная логика подключения стандартного Powered Up хаба
  * @param {Hub} hub - объект хаба из node-poweredup
  */
@@ -255,10 +264,14 @@ async function connectHub(hub) {
 
   const uuid = hub.uuid || hub.address || null;
 
-  if (uuid && trains[uuid]?.connected) {
-    log.info(`Already connected, skip duplicate: ${uuid.slice(0, 8)}`);
+  if (uuid && (trains[uuid]?.connected || _connectingHubs.has(uuid))) {
+    log.info(
+      `Already connected/connecting, skip duplicate: ${(uuid || "").slice(0, 8)}`,
+    );
     return;
   }
+
+  if (uuid) _connectingHubs.add(uuid);
 
   const defaultName = hub.name || `Train-${Object.keys(trains).length + 1}`;
   hubConfig = loadConfig();
@@ -490,6 +503,9 @@ async function connectHub(hub) {
     ramp.startKeepalive(trainId);
     ramp._setLED(trains[trainId]);
 
+    // Подключение завершено — убираем из списка «подключаемых»
+    if (uuid) _connectingHubs.delete(uuid);
+
     // Обработка изменения уровня заряда
     let _lastBatEmit = -1,
       _lastBatLogTime = 0,
@@ -536,6 +552,7 @@ async function connectHub(hub) {
 
     hub.on("disconnect", () => {
       log.warn(`Disconnected: ${friendlyName}`, trainId);
+      if (uuid) _connectingHubs.delete(uuid); // разрешаем реконнект
       ramp.clearRamp(trainId);
       ramp.stopKeepalive(trainId);
       sched.stopAllScenarios();
@@ -551,6 +568,7 @@ async function connectHub(hub) {
       }, 3000);
     });
   } catch (err) {
+    if (uuid) _connectingHubs.delete(uuid);
     log.error(`Hub error ${friendlyName}: ${err.message}`);
   }
 }
